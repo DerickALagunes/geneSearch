@@ -3,6 +3,7 @@ require 'ostruct'
 require 'open-uri'
 require 'nokogiri'
 require 'openSSL'
+require 'mysql'
 
 #Parse parameters
 param = OpenStruct.new
@@ -10,16 +11,29 @@ OptionParser.new do |opt|
         opt.banner = "Usage: search.rb [options]\n\n"
         opt.on('-g', '--gen  Nombre Gen [String]', 'The name of the gen that you want to search Ex: FBN1') { |o| param.gen = o }
         opt.on('-s', '--show', 'Shows all available information at console output') { |o| param.show = o }
-        opt.on('-w', '--web Path to file [String]', 'A path where the script is going to create an html file with the output of the result ("www" directory maybe)') { |o| param.web = o }
+        opt.on('-w', '--web', 'An html will be created with the output of the result') { |o| param.web = o }
         opt.on_tail('-v', '--version', 'Shows version') { puts "genSearch v0.9"; exit }
         opt.on_tail('-h', '--help', 'This script is used to get the information from a gen from a data base on the internet (so you need a conection) then it gets the basic information from that gen and stores it in a local database (mysql), see options for futher details') { puts "\n\n\n\n"; puts opt; puts "\n\n"; exit }
 end.parse!
 
-## variables globales (declaracion)
-@idGen = ""
-@summary = ""
-@ng = ""
-@publicationsIds
+## Conector a bd
+#my = Mysql.new(hostname, username, password, databasename)
+con = Mysql.new('localhost', 'derick', 'tuchito1', 'mydb')  
+# rs = con.query('select * from student')  
+# rs.each_hash { |h| puts h['name']}  
+
+## variables por petición:
+#petición 1
+#pwtición 2
+	@idGen = ""
+	@official_name = ""
+	@summary = ""
+	@chromosome = ""
+	@locus = ""
+#petición 3
+	@ng = ""
+	@ublicationsIds #array
+
 
 ##programa principal
 #  si pasaron un gen en el parametro -g comienza, si no, aborta
@@ -31,6 +45,7 @@ else
 	abort("Para comenzar el programa se necesita un parametro -g, usa -h para ver la ayuda")
 end
 
+
 ## Define la primera string donde se buscara el id del gen que se quiera buscar
 idSite = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&amp;term=#{param.gen}%5bGene%20Name%5d+AND+\"Homo%20sapiens\"%5bOrganism"
 
@@ -40,7 +55,6 @@ doc = Nokogiri::XML(open( idSite , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE})
 
 ## Debe regresar el Id del gen
 #  si no encontro nada terminar el programa
-
 if doc.xpath("//Count/node()")[0] == "0" #consulta xpath para regresar el primer valor de la etiqueta count (por eso el [0])
 	puts "No existe gen"
 	abort("Fin del programa, por favor ingrese un gen valido")
@@ -54,8 +68,20 @@ infoGen = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?db=gene&a
 doc = Nokogiri::XML(open( infoGen , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}))
 
 ## Conseguir todos las variables de información
-#  Aun no estan confirmadas cuales son pero summary es una de ellas
-@summary = doc.xpath("//Summary/node()")[0]
+@official_name = doc.xpath("//NomenclatureName/node()")[0]
+@summary =       doc.xpath("//eSummaryResult/DocumentSummarySet/DocumentSummary/Summary/node()")[0]
+@chromosome =    doc.xpath("//eSummaryResult/DocumentSummarySet/DocumentSummary/Chromosome/node()")[0]
+@locus =         doc.xpath("//eSummaryResult/DocumentSummarySet/DocumentSummary/MapLocation/node()")[0]
+
+rs = con.query("INSERT INTO GENE VALUES (
+	#{@idGen},
+	#{@official_name},
+	#{@summary},
+	#{@chromosome},
+	#{@locus}
+)")  
+
+
 
 ## Tercera string para obtener valor NG_XXXXXXXX
 ngGen = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gene&amp;id=#{@idGen}&amp;report=sgml&amp;retmode=xml"
@@ -157,4 +183,4 @@ end
 
 
 
-
+con.close
