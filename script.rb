@@ -2,14 +2,15 @@ require 'optparse'
 require 'ostruct'
 require 'open-uri'
 require 'nokogiri'
-require 'openSSL'
+require 'openssl'
 require 'mysql'
 
 #Parse parameters
 param = OpenStruct.new
 OptionParser.new do |opt|
         opt.banner = "Usage: search.rb [options]\n\n"
-        opt.on('-g', '--gen  Nombre Gen [String]', 'The name of the gen that you want to search Ex: FBN1') { |o| param.gen = o }
+        opt.on('-g', '--gen  Nombre Gen [String]', 'El nombre del gen que quieres buscar Ejemplo: FBN1') { |o| param.gen = o }
+        opt.on('-l', '--limit  publicaciones [String]', 'Limita el numero de publicaciones de referencia sobre el gen en la base de datos') { |o| param.gen = o }
         opt.on('-s', '--show', 'Shows all available information at console output') { |o| param.show = o }
         opt.on('-w', '--web', 'An html will be created with the output of the result') { |o| param.web = o }
         opt.on_tail('-v', '--version', 'Shows version') { puts "genSearch v0.9"; exit }
@@ -31,8 +32,19 @@ con = Mysql.new('localhost', 'derick', 'tuchito1', 'mydb')
 	@chromosome = ""
 	@locus = ""
 #petición 3
+	@start_position = ""
+	@end_position = ""
+	@strand = ""
 	@ng = ""
-	@ublicationsIds #array
+	@idAllele = ""
+#peticion 4
+	@publicationsIds
+#peticion 5
+	@title = ""
+	@authors = ""
+	@abstract = ""
+	@publication = ""
+	
 
 
 ##programa principal
@@ -45,9 +57,8 @@ else
 	abort("Para comenzar el programa se necesita un parametro -g, usa -h para ver la ayuda")
 end
 
-
 ## Define la primera string donde se buscara el id del gen que se quiera buscar
-idSite = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&amp;term=#{param.gen}%5bGene%20Name%5d+AND+\"Homo%20sapiens\"%5bOrganism"
+idSite = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=gene&amp;term='+param.gen+'%5bGene%20Name%5d+AND+"Homo%20sapiens"%5bOrganism'
 
 ## Regresa el XML
 # se debe poner en los parametros de la URL el termino 'term'= con una variable de entrada
@@ -55,7 +66,9 @@ doc = Nokogiri::XML(open( idSite , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE})
 
 ## Debe regresar el Id del gen
 #  si no encontro nada terminar el programa
-if doc.xpath("//Count/node()")[0] == "0" #consulta xpath para regresar el primer valor de la etiqueta count (por eso el [0])
+numero = doc.xpath("//Count/node()")[0].to_s
+
+if numero=="0"
 	puts "No existe gen"
 	abort("Fin del programa, por favor ingrese un gen valido")
 else
@@ -73,43 +86,137 @@ doc = Nokogiri::XML(open( infoGen , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}
 @chromosome =    doc.xpath("//eSummaryResult/DocumentSummarySet/DocumentSummary/Chromosome/node()")[0]
 @locus =         doc.xpath("//eSummaryResult/DocumentSummarySet/DocumentSummary/MapLocation/node()")[0]
 
-rs = con.query("INSERT INTO GENE VALUES (
-	#{@idGen},
-	#{@official_name},
-	#{@summary},
-	#{@chromosome},
-	#{@locus}
-)")  
-
-
+#checar si ya esta registrado
+rs = con.query("SELECT idSymbol from Gene WHERE idSymbol=#{@idGen};")
+if rs.num_rows > 0
+	abort("Ese gen ya esta registrado, fin del programa")
+else
+	#insertar gen
+	con.query("
+	INSERT INTO Gene(idSymbol,officialName,summary,chromosome,locus) VALUES (
+		'#{@idGen}',
+		'#{@official_name}',
+		'#{@summary}',
+		'#{@chromosome}',
+		'#{@locus}');
+	")
+	#insertar relacion con DataBank
+	con.query("
+	INSERT INTO Gene_has_DataBank(idGene,idDataBank) VALUES (
+		'#{@idGen}',
+		'1');
+	")
+end  
 
 ## Tercera string para obtener valor NG_XXXXXXXX
 ngGen = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=gene&amp;id=#{@idGen}&amp;report=sgml&amp;retmode=xml"
-## vamos por los datos del xml
 doc = Nokogiri::XML(open( ngGen , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}))
 
 ## Aqui devuelve un arreglo con varios valores, ocupamos extraer solo el que sea NG_XXXXXX
 @ng = doc.xpath("//Gene-commentary_accession[contains(.,'NG_')]/node()")[0]
 publicationsIds1 = doc.xpath("//PubMedId/node()")
 
+##Contraints
+
+@start_position = doc.xpath("//Entrezgene-Set/Entrezgene/Entrezgene_locus/Gene-commentary/Gene-commentary_type[@value='genomic']/../Gene-commentary_seqs/Seq-loc/Seq-loc_int/Seq-interval/Seq-interval_from/node()")[0]
+@end_position =   doc.xpath("//Entrezgene-Set/Entrezgene/Entrezgene_locus/Gene-commentary/Gene-commentary_type[@value='genomic']/../Gene-commentary_seqs/Seq-loc/Seq-loc_int/Seq-interval/Seq-interval_to/node()"  )[0]
+@strand = doc.xpath("//Entrezgene-Set/Entrezgene/Entrezgene_locus/Gene-commentary/Gene-commentary_type[@value='genomic']/../Gene-commentary_seqs/Seq-loc/Seq-loc_int/Seq-interval/Seq-interval_strand/Na-strand/@value")[0]
+if @strand =~ "minus"
+	@strand = "M"
+else
+	@strand = "P"
+end
+
+	#insertar a Allele
+	con.query("
+	INSERT INTO allele(start_position,end_position,strand,Gene_idSymbol) VALUES (
+		'#{@start_position}',
+		'#{@end_position}',
+		'#{@strand}',
+		'#{@idGen}');
+	")
+	#insertar relacion con DataBank
+	aidee = con.query("SELECT MAX(ordnum) from allele;")
+	@idAllele = aidee.fetch_row[0]
+		con.query("
+		INSERT INTO AlleleDataBankIndentificacion(DataBank_idDataBank, allele_ordnum) VALUES (
+			'1',
+			#{@idAllele});
+		")
+
+
 ## Cuarta string para obtener la cadena de ADN (dentro de las etiquetas: GBSeq_secuence)
 cadena = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=nucleotide&amp;id=#{@ng}&amp;rettype=gb&amp;retmode=xml"
-
-## vamos por los datos del xml
 doc = Nokogiri::XML(open( cadena , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}))
 
 ## super texto de la cadena de adn, tl;dr
 @cadena = doc.xpath("//GBSeq_sequence/node()")
-publicationsIds2 = doc.xpath("//PubMedId/node()")
+	con.query("
+	INSERT INTO AllelicReferenceType(sequense,allele_ordnum) VALUES (
+		'#{@cadena}',
+		'#{@idAllele}');
+	")
 
+publicationsIds2 = doc.xpath("//PubMedId/node()")
 ##comparar los id's de publicationsIds1 y 2 para tener una lista unica
 @publicationsIds = publicationsIds1 | publicationsIds2
-## conseguir los datos de la referencias del ultimo link, pueden ser articulos o libros
 
-##se debe leer esta cadena por cada publicación (parametro numero de publicaciones que quieres, por default 5?)
-##Quinta cadena
-#referencias = "http://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&amp;retmode=xml&amp;id=#{idDePublicaciones}"
-## hacer un ciclo aqui por cada elemento de publicationIds y sacar su información aunque no se si poner esa info en un map o guardarla directo en la base de datos, si es el segundo caso entonces primero seria mejor guardar lo demas antes.
+limite = 5
+
+if param.limit
+	limite = param.limit
+end
+
+for i in 0..limite
+	referencias = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi?db=pubmed&amp;retmode=xml&amp;id=#{@publicationsIds[i]}"
+	doc = Nokogiri::XML(open( referencias , {ssl_verify_mode: OpenSSL::SSL::VERIFY_NONE}))
+
+	if doc.xpath("//PubmedArticle")[0] != nil
+		@publication = doc.xpath("//PubmedArticleSet/PubmedArticle/MedlineCitation/Article/Journal/Title/node()")[0].to_s().gsub(/'/,"")
+		last = doc.xpath("//PubmedArticleSet/PubmedArticle/MedlineCitation/Article/AuthorList/Author/LastName/node()")[0]
+		fore = doc.xpath("//PubmedArticleSet/PubmedArticle/MedlineCitation/Article/AuthorList/Author/ForeName/node()")[0]
+		@authors = "#{last} #{fore}"
+		@abstract = doc.xpath("//PubmedArticleSet/PubmedArticle/MedlineCitation/Article/Abstract/AbstractText/node()")[0].to_s().gsub(/'/,"")
+		@title = doc.xpath("//PubmedArticleSet/PubmedArticle/MedlineCitation//Article/ArticleTitle/node()")[0].to_s().gsub(/'/,"")
+	elsif
+		@publication = doc.xpath("//PubmedArticleSet/PubmedBookArticle/BookDocument/Book/ArticleTitle/node()")[0].to_s().gsub(/'/,"")	
+		last = doc.xpath("//PubmedArticleSet/PubmedBookArticle/BookDocument/Book/AuthorList/Author/LastName/node()")[0]
+		fore = doc.xpath("//PubmedArticleSet/PubmedBookArticle/BookDocument/Book/AuthorList/Author/ForeName/node()")[0]
+		@authors =  "#{last} #{fore}"
+		@abstract = doc.xpath("//PubmedArticleSet/PubmedBookArticle/BookDocument/Abstract/AbstractText/node()")[0].to_s().gsub(/'/,"")
+		@title = doc.xpath("//PubmedArticleSet/PubmedBookArticle/BookDocument/Book/BookTitle/node()")[0].to_s().gsub(/'/,"")	
+	end
+
+	##insert a BibliographyReference
+	con.query("
+	INSERT INTO BibliographyReference(title,authors,abstract,publication) VALUES (
+		'#{@title}',
+		'#{@authors}',
+		'#{@abstract}',
+		'#{@publication}');
+	")	
+	biblio = con.query("SELECT MAX(id) from BibliographyReference;")
+	biblio = biblio.fetch_row[0]
+	## insert a Allele_has_Bibliography_reference
+	con.query("
+	INSERT INTO allele_has_BibliographyReference(allele_ordnum, BibliographyReference_id) VALUES (
+		'#{@idAllele}',
+		'#{biblio}');
+	")
+	con.query("
+	INSERT INTO BiblliographyDB(URL,BibliographyReference_id) VALUES (
+		'https://www.ncbi.nlm.nih.gov',
+		'#{biblio}');
+	")
+	con.query("
+	INSERT INTO BibliographyReference_has_Gene(BibliographyReference_id,Gene_idSymbol) VALUES (
+		'#{biblio}',
+                '#{@idGen}');
+	")	
+end
+
+puts "Gen insertado!"
+
 
 ## imprimir toda la información en consola
 if param.show
