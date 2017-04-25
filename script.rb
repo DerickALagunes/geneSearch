@@ -11,17 +11,14 @@ OptionParser.new do |opt|
         opt.banner = "Usage: search.rb [options]\n\n"
         opt.on('-g', '--gen  Nombre Gen [String]', 'El nombre del gen que quieres buscar Ejemplo: FBN1') { |o| param.gen = o }
         opt.on('-l', '--limit  publicaciones [String]', 'Limita el numero de publicaciones de referencia sobre el gen en la base de datos') { |o| param.gen = o }
-        opt.on('-s', '--show', 'Shows all available information at console output') { |o| param.show = o }
-        opt.on('-w', '--web', 'An html will be created with the output of the result') { |o| param.web = o }
+        opt.on('-s', '--show', 'Muestra los datos en consola') { |o| param.show = o }
+        opt.on('-d', '--dump', 'Borra la base de datos') { |o| param.dump = o }
         opt.on_tail('-v', '--version', 'Shows version') { puts "genSearch v0.9"; exit }
         opt.on_tail('-h', '--help', 'This script is used to get the information from a gen from a data base on the internet (so you need a conection) then it gets the basic information from that gen and stores it in a local database (mysql), see options for futher details') { puts "\n\n\n\n"; puts opt; puts "\n\n"; exit }
 end.parse!
 
 ## Conector a bd
-#my = Mysql.new(hostname, username, password, databasename)
 con = Mysql.new('localhost', 'derick', 'tuchito1', 'mydb')  
-# rs = con.query('select * from student')  
-# rs.each_hash { |h| puts h['name']}  
 
 ## variables por petición:
 #petición 1
@@ -48,6 +45,21 @@ con = Mysql.new('localhost', 'derick', 'tuchito1', 'mydb')
 
 
 ##programa principal
+if param.dump
+	con.query("delete from AlleleDataBankIndentificacion;")
+	con.query("delete from AllelicReferenceType;")
+	con.query("delete from allele_has_BibliographyReference;")
+	con.query("delete from BibliographyReference_has_Gene;")
+	con.query("delete from BiblliographyDB;")
+	con.query("delete from Gene_has_DataBank;")
+	con.query("delete from allele;")
+	con.query("delete from Gene;")
+	con.query("delete from BiblliographyDB;")
+	con.query("delete from BibliographyReference;")
+	abort("Se borro la base de datos.")
+end
+
+
 #  si pasaron un gen en el parametro -g comienza, si no, aborta
 if param.gen
 	puts ""
@@ -221,73 +233,26 @@ puts "Gen insertado!"
 ## imprimir toda la información en consola
 if param.show
 	puts "--------------------------GeneSearch---------------------------"
-	puts " We have searched for Gene: #{param.gen}, general information: "
+	puts " Nombre del gen: #{param.gen}, informacion general: "
 	puts ""
 	puts @summary
 	puts ""
-	puts ""
-	puts ""
-	puts ""
-	puts ""
+	puts "ID: #{@idGen}"
+        puts "Nombre oficial: #{@official_name}"
+        puts "Cromosoma: #{@chromosome}"
+        puts "Locus: #{@locus}"
+        puts "Inicio: #{@start_position}"
+        puts "Final: #{@end_position}"
+        puts "Strand: #{@strand}"
+        puts "NG: #{@ng}"
+        puts "id Allele: #{@idAllele}"
+        puts ""
+	puts "Ejemplo publicación:"
+        puts "Titulo: #{@title}"
+        puts "Autor: #{@authors}"
+        puts "Abstracto: #{@abstract}"
+        puts "Publicacion #{@publication}"
 end
-
-
-## crear un archivo HTML con el output
-if param.web
-	archivo = File.new("result_#{param.gen}.html", "w+")
-	
-	archivo.puts '<!doctype html>'
-	archivo.puts '<html lang="en">'
-	archivo.puts '<head>'
-	archivo.puts '<meta charset="utf-8">'
-	archivo.puts '<title>GeneSearchResult</title>'
-	archivo.puts '</head>'
-	archivo.puts '<body>'
-	archivo.puts '<p><b>--------------------------GeneSearch---------------------------</b></p>'
-	archivo.puts '<p>We have searched for Gene: #{param.gen}, general information:</p>'
-	archivo.puts '<br />'
-	archivo.puts '<p>'+@summary+'</p>'
-	archivo.puts '<br />'
-	archivo.puts '</body>'
-	archivo.puts '</html>'
-
-end
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 con.close
